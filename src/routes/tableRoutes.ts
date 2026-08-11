@@ -1,0 +1,13 @@
+import { Router } from "express";
+import { createTable, deleteTable, getAllTable, toogleTableStatus, updateTable } from "../controllers/TableController.js";
+import { authMiddleware } from "../middlewares/authMiddleware.js";
+
+const router = Router();
+
+router.post("/", authMiddleware, createTable);
+router.get("/", authMiddleware, getAllTable);
+router.patch("/:id/toggle-status", authMiddleware, toogleTableStatus);
+router.put("/:id", authMiddleware, updateTable)
+router.delete("/:id", authMiddleware, deleteTable)
+
+export default router;
