@@ -3,6 +3,7 @@ import { error, success } from "../utils/response.js";
 import { StorageService } from "../services/storageService";
 import prisma from "../models/prisma.js";
 
+
 export const getAllMenu = async (req: Request, res: Response) => {
   try {
     const dataMenu = await prisma.menu.findMany();
@@ -91,6 +92,36 @@ export const deleteMenu = async (req: Request, res: Response) => {
     }
 
     return success(res, 200, "Succes delete menu");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return error(res, 500, "Internal server error", message);
+  }
+};
+
+export const updateAvailable = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const findMenu = await prisma.menu.findUnique({
+      where: {
+        id: Number(id),
+      },
+    });
+
+    if (!findMenu) {
+      return error(res, 400, "Menu not found", "MENU_NOT_FOUND");
+    }
+
+    const updateAvailable = await prisma.menu.update({
+      where: {
+        id: Number(id),
+      },
+      data: {
+        isAvailable: !findMenu.isAvailable,
+      },
+    });
+
+    return success(res, 200, "Succes update available", updateAvailable)
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return error(res, 500, "Internal server error", message);

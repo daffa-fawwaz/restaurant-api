@@ -48,6 +48,7 @@ model Order {
 
   source        OrderSource @default(CUSTOMER)
   status        OrderStatus @default(IN_PROGRESS)
+  nameCustomer String?
 
   subtotal      Decimal     @db.Decimal(10,2)
   serviceCharge Decimal     @db.Decimal(10,2)
