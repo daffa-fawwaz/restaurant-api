@@ -4,6 +4,7 @@ import {
   updateMenu,
   deleteMenu,
   getAllMenu,
+  updateAvailable
 } from "../controllers/menuController";
 import { upload } from "../middlewares/uploadMiddleware";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
@@ -12,7 +13,8 @@ const router = Router();
 
 router.get("/", getAllMenu);
 router.post("/", authMiddleware, upload.single("image"), createMenus);
-router.put("/", authMiddleware, updateMenu);
+router.put("/:id", authMiddleware, updateMenu);
 router.delete("/:id", authMiddleware, deleteMenu);
+router.patch("/is-avail/:id", authMiddleware, updateAvailable)
 
 export default router;

@@ -7,7 +7,7 @@ const SERVICE_CHARGE_RATE = 0.1;
 
 export const createOrder = async (req: Request, res: Response) => {
   try {
-    const { tableId, source, items } = req.body;
+    const { tableId, source, items, nameCustomer } = req.body;
 
     if (!tableId) {
       return error(res, 400, "Table is required", "VALIDATION_ERROR");
@@ -95,6 +95,7 @@ export const createOrder = async (req: Request, res: Response) => {
         data: {
           tableId: Number(tableId),
           source: source || "CUSTOMER",
+          nameCustomer,
           status: "IN_PROGRESS",
           subtotal,
           serviceCharge,
@@ -200,31 +201,118 @@ export const changeStatusOrder = async (req: Request, res: Response) => {
   }
 };
 
-
 export const payOrder = async (req: Request, res: Response) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = req.params;
     const { amountReceived } = req.body;
 
-    if (!Number.isFinite(id)) {
-      return error(
-        res,
-        400,
-        "Invalid order ID",
-        "VALIDATION_ERROR"
-      );
+    const orderId = Number(id);
+    const receive = Number(amountReceived);
+
+    // Validasi ID
+    if (Number.isNaN(orderId)) {
+      return error(res, 400, "Invalid order ID", "INVALID_ORDER_ID");
     }
 
-    const received = Number(amountReceived);
-
-    if (!Number.isFinite(received) || received <= 0) {
+    // Validasi amount
+    if (Number.isNaN(receive) || receive <= 0) {
       return error(
         res,
         400,
         "Amount received must be greater than 0",
-        "VALIDATION_ERROR"
+        "MUST_GREATER_THEN_0",
       );
     }
+
+    // Cari order
+    const order = await prisma.order.findUnique({
+      where: {
+        id: orderId,
+      },
+    });
+
+    if (!order) {
+      return error(res, 404, "Order not found", "ORDER_NOT_FOUND");
+    }
+
+    // Order harus SERVED
+    if (order.status !== "SERVED") {
+      return error(
+        res,
+        400,
+        "Order can only be paid when status is SERVED",
+        "ORDER_NOT_SERVED",
+      );
+    }
+
+    const total = Number(order.total);
+
+    // Validasi pembayaran
+    if (receive < total) {
+      return error(
+        res,
+        400,
+        `Insufficient payment. Total payment is ${total}`,
+        "UANG_KURANG",
+      );
+    }
+
+    const changeAmount = receive - total;
+
+    // Update order + table dalam satu transaction
+    const paidOrder = await prisma.$transaction(async (tx) => {
+      // Update order menjadi PAID
+      const updatedOrder = await tx.order.update({
+        where: {
+          id: orderId,
+        },
+        data: {
+          status: "PAID",
+          isPaid: true,
+          amountReceived: receive,
+          changeAmount: changeAmount,
+          paidAt: new Date(),
+        },
+      });
+
+      // Setelah pembayaran berhasil,
+      // meja kembali tersedia
+      await tx.table.update({
+        where: {
+          id: order.tableId,
+        },
+        data: {
+          isAvailable: true,
+        },
+      });
+
+      // Ambil kembali order lengkap
+      return tx.order.findUnique({
+        where: {
+          id: updatedOrder.id,
+        },
+        include: {
+          table: true,
+          items: {
+            include: {
+              menu: true,
+            },
+          },
+        },
+      });
+    });
+
+    return success(res, 200, "Order paid successfully", paidOrder);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+
+    return error(res, 500, "Internal server error", message);
+  }
+};
+
+export const getOrderById = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
 
     const order = await prisma.order.findUnique({
       where: {
@@ -241,100 +329,20 @@ export const payOrder = async (req: Request, res: Response) => {
     });
 
     if (!order) {
-      return error(
-        res,
-        404,
-        "Order not found",
-        "ORDER_NOT_FOUND"
-      );
+      return error(res, 400, "Order not found", "ORDER_NOT_FOUND");
     }
 
-    if (order.isPaid) {
-      return error(
-        res,
-        409,
-        "Order has already been paid",
-        "ORDER_ALREADY_PAID"
-      );
-    }
-
-    if (order.status !== "SERVED") {
-      return error(
-        res,
-        409,
-        "Order must be served before payment",
-        "ORDER_NOT_SERVED"
-      );
-    }
-
-    const total = Number(order.total);
-
-    if (received < total) {
-      return error(
-        res,
-        400,
-        "Amount received is less than total",
-        "INSUFFICIENT_PAYMENT"
-      );
-    }
-
-    const change = received - total;
-
-    const paidOrder = await prisma.$transaction(async (tx) => {
-      const updatedOrder = await tx.order.update({
-        where: {
-          id,
-        },
-        data: {
-          isPaid: true,
-          amountReceived: received,
-          changeAmount: change,
-          paidAt: new Date(),
-        },
-        include: {
-          table: true,
-          items: {
-            include: {
-              menu: true,
-            },
-          },
-        },
-      });
-
-      await tx.table.update({
-        where: {
-          id: order.tableId,
-        },
-        data: {
-          isAvailable: true,
-        },
-      });
-
-      return updatedOrder;
-    });
-
-    return success(
-      res,
-      200,
-      "Payment successful",
-      {
-        order: paidOrder,
-        payment: {
-          total,
-          amountReceived: received,
-          change,
-        },
-      }
-    );
+    return success(res, 200, "Succes get order", order);
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Unknown error";
+    console.error("Failed to get order:", err);
 
-    return error(
-      res,
-      500,
-      "Internal server error",
-      message
-    );
+    const message = err instanceof Error ? err.message : "Unknown server error";
+
+    return res.status(500).json({
+      success: false,
+      status: 500,
+      message: "Internal server error",
+      error: message,
+    });
   }
 };

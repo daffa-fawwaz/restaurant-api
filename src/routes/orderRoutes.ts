@@ -5,7 +5,8 @@ import {
   changeStatusOrder,
   createOrder,
   getAllOrder,
-  payOrder
+  payOrder,
+  getOrderById,
 } from "../controllers/orderController.js";
 
 const router = Router();
@@ -13,6 +14,7 @@ const router = Router();
 router.post("/", authMiddleware, createOrder);
 router.get("/", authMiddleware, getAllOrder);
 router.patch("/:id", authMiddleware, changeStatusOrder);
+router.get("/:id", getOrderById);
 router.patch("/:id/payment", payOrder);
 
 export default router;
