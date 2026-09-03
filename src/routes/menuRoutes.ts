@@ -4,9 +4,9 @@ import {
   updateMenu,
   deleteMenu,
   getAllMenu,
-  updateAvailable
-} from "../controllers/menuController";
-import { upload } from "../middlewares/uploadMiddleware";
+  updateAvailable,
+} from "../controllers/menuController.js";
+import { upload } from "../middlewares/uploadMiddleware.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
 const router = Router();

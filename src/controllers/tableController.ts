@@ -4,7 +4,7 @@ import prisma from "../models/prisma.js";
 
 export const createTable = async (req: Request, res: Response) => {
   try {
-    const { number, capacity, status } = req.body;
+    const { number, capacity } = req.body;
 
     if (!number || !capacity) {
       return error(res, 400, "All field is required!", "FIELD_REQUIRED");
@@ -29,7 +29,6 @@ export const createTable = async (req: Request, res: Response) => {
       data: {
         number: Number(number),
         capacity: Number(capacity),
-        status,
       },
     });
 
@@ -96,7 +95,6 @@ export const toogleTableStatus = async (req: Request, res: Response) => {
   }
 };
 
-
 export const updateTable = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
@@ -109,12 +107,7 @@ export const updateTable = async (req: Request, res: Response) => {
     });
 
     if (!table) {
-      return error(
-        res,
-        404,
-        "Table not found",
-        "TABLE_NOT_FOUND"
-      );
+      return error(res, 404, "Table not found", "TABLE_NOT_FOUND");
     }
 
     const existNumber = await prisma.table.findFirst({
@@ -131,7 +124,7 @@ export const updateTable = async (req: Request, res: Response) => {
         res,
         409,
         "Table number already exists",
-        "TABLE_NUMBER_ALREADY_EXISTS"
+        "TABLE_NUMBER_ALREADY_EXISTS",
       );
     }
 
@@ -145,23 +138,13 @@ export const updateTable = async (req: Request, res: Response) => {
       },
     });
 
-    return success(
-      res,
-      200,
-      "Table updated successfully",
-      updatedTable
-    );
+    return success(res, 200, "Table updated successfully", updatedTable);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
-    return error(
-      res,
-      500,
-      "Internal server error",
-      message
-    );
+    return error(res, 500, "Internal server error", message);
   }
-}; 
+};
 
 export const deleteTable = async (req: Request, res: Response) => {
   try {
