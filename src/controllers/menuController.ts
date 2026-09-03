@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { error, success } from "../utils/response.js";
-import { StorageService } from "../services/storageService";
+import { StorageService } from "../services/storageService.js";
 import prisma from "../models/prisma.js";
 
 

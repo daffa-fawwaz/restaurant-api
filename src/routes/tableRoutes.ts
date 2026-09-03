@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createTable, deleteTable, getAllTable, toogleTableStatus, updateTable } from "../controllers/TableController.js";
+import { createTable, deleteTable, getAllTable, toogleTableStatus, updateTable } from "../controllers/tableController.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
 const router = Router();

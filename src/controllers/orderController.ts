@@ -2,12 +2,13 @@ import type { Request, Response } from "express";
 import prisma from "../models/prisma.js";
 import { error, success } from "../utils/response.js";
 import type { OrderStatus } from "@prisma/client";
+import { getIO } from "../socket/socket.js";
 
 const SERVICE_CHARGE_RATE = 0.1;
 
 export const createOrder = async (req: Request, res: Response) => {
   try {
-    const { tableId, source, items, nameCustomer } = req.body;
+    const { tableId, source, items, nameCustomer, phone } = req.body;
 
     if (!tableId) {
       return error(res, 400, "Table is required", "VALIDATION_ERROR");
@@ -36,7 +37,6 @@ export const createOrder = async (req: Request, res: Response) => {
     }
 
     const menuIds = items.map((item) => Number(item.menuId));
-
     const menus = await prisma.menu.findMany({
       where: {
         id: {
@@ -71,10 +71,6 @@ export const createOrder = async (req: Request, res: Response) => {
 
       const quantity = Number(item.quantity);
 
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        throw new Error(`Invalid quantity for menu ${menu.name}`);
-      }
-
       const price = Number(menu.price);
 
       subtotal += price * quantity;
@@ -98,6 +94,7 @@ export const createOrder = async (req: Request, res: Response) => {
           nameCustomer,
           status: "IN_PROGRESS",
           subtotal,
+          phone,
           serviceCharge,
           total,
 
@@ -128,11 +125,31 @@ export const createOrder = async (req: Request, res: Response) => {
       return newOrder;
     });
 
+    try {
+      getIO().emit("new_order", order);
+    } catch (e) {
+      console.error("Socket emit new_order error:", e);
+    }
+
     return success(res, 201, "Order created successfully", order);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return error(res, 500, "Internal server error", message);
   }
+};
+
+const formatOrderResponse = (order: any) => {
+  if (!order) return null;
+  return {
+    ...order,
+    isPaid:
+      order.status === "PAID" ||
+      order.status === "COMPLETED" ||
+      order.payment?.status === "PAID",
+    amountReceived: order.payment?.amountReceived ?? null,
+    changeAmount: order.payment?.changeAmount ?? null,
+    paidAt: order.payment?.paidAt ?? null,
+  };
 };
 
 export const getAllOrder = async (req: Request, res: Response) => {
@@ -148,6 +165,22 @@ export const getAllOrder = async (req: Request, res: Response) => {
         ...(tableId && {
           tableId: Number(tableId),
         }),
+
+        // Sembunyikan order CANCELLED serta order "bayar sekarang" yang masih PENDING / belum lunas
+        NOT: [
+          { status: "CANCELLED" },
+          {
+            AND: [
+              { status: "PENDING" },
+              {
+                payment: {
+                  method: "MIDTRANS",
+                  status: { not: "PAID" },
+                },
+              },
+            ],
+          },
+        ],
       },
       include: {
         table: true,
@@ -156,6 +189,7 @@ export const getAllOrder = async (req: Request, res: Response) => {
             menu: true,
           },
         },
+        payment: true,
       },
 
       orderBy: {
@@ -163,41 +197,125 @@ export const getAllOrder = async (req: Request, res: Response) => {
       },
     });
 
-    return success(res, 200, "Orders fetched successfully", getOrder);
+    const formattedOrders = getOrder.map(formatOrderResponse);
+
+    return success(res, 200, "Orders fetched successfully", formattedOrders);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return error(res, 500, "Internal server error", message);
   }
 };
 
-export const changeStatusOrder = async (req: Request, res: Response) => {
+export const changeStatusOrder = async (
+  req: Request,
+  res: Response
+) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
+    const orderId = Number(id);
+
     const findOrder = await prisma.order.findUnique({
       where: {
-        id: Number(id),
+        id: orderId,
       },
     });
 
     if (!findOrder) {
-      return error(res, 400, "Order not found", "ORDER_NOT_FOUND");
+      return error(
+        res,
+        400,
+        "Order not found",
+        "ORDER_NOT_FOUND"
+      );
     }
 
-    const updateOrderStatus = await prisma.order.update({
-      where: {
-        id: Number(id),
-      },
-      data: {
-        status: status,
-      },
-    });
+    const updatedOrder = await prisma.$transaction(
+      async (tx) => {
+        const updateOrderStatus = await tx.order.update({
+          where: {
+            id: orderId,
+          },
+          data: {
+            status: status,
+          },
+        });
 
-    return success(res, 200, "Update status succes", updateOrderStatus);
+        // Jika status menjadi COMPLETED, PAID, atau CANCELLED,
+        // meja langsung tersedia
+        if (
+          status === "COMPLETED" ||
+          status === "PAID" ||
+          status === "CANCELLED"
+        ) {
+          await tx.table.update({
+            where: {
+              id: findOrder.tableId,
+            },
+            data: {
+              isAvailable: true,
+            },
+          });
+        }
+
+        // Jika status menjadi aktif,
+        // meja kembali terisi
+        else if (
+          status === "IN_PROGRESS" ||
+          status === "SERVED" ||
+          status === "PENDING"
+        ) {
+          await tx.table.update({
+            where: {
+              id: findOrder.tableId,
+            },
+            data: {
+              isAvailable: false,
+            },
+          });
+        }
+
+        return updateOrderStatus;
+      }
+    );
+
+    // ==========================================
+    // SOCKET.IO
+    // ==========================================
+
+    try {
+      getIO()
+        .to(`order:${updatedOrder.id}`)
+        .emit("order_status_updated", updatedOrder);
+
+      getIO().emit("order_updated", updatedOrder);
+    } catch (e) {
+      console.error("Socket emit order_status_updated error:", e);
+    }
+
+    // ==========================================
+    // RESPONSE API
+    // ==========================================
+
+    return success(
+      res,
+      200,
+      "Update status success",
+      updatedOrder
+    );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return error(res, 500, "Internal server error", message);
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Unknown error";
+
+    return error(
+      res,
+      500,
+      "Internal server error",
+      message
+    );
   }
 };
 
@@ -209,12 +327,10 @@ export const payOrder = async (req: Request, res: Response) => {
     const orderId = Number(id);
     const receive = Number(amountReceived);
 
-    // Validasi ID
     if (Number.isNaN(orderId)) {
       return error(res, 400, "Invalid order ID", "INVALID_ORDER_ID");
     }
 
-    // Validasi amount
     if (Number.isNaN(receive) || receive <= 0) {
       return error(
         res,
@@ -224,7 +340,6 @@ export const payOrder = async (req: Request, res: Response) => {
       );
     }
 
-    // Cari order
     const order = await prisma.order.findUnique({
       where: {
         id: orderId,
@@ -235,7 +350,6 @@ export const payOrder = async (req: Request, res: Response) => {
       return error(res, 404, "Order not found", "ORDER_NOT_FOUND");
     }
 
-    // Order harus SERVED
     if (order.status !== "SERVED") {
       return error(
         res,
@@ -247,7 +361,6 @@ export const payOrder = async (req: Request, res: Response) => {
 
     const total = Number(order.total);
 
-    // Validasi pembayaran
     if (receive < total) {
       return error(
         res,
@@ -259,24 +372,39 @@ export const payOrder = async (req: Request, res: Response) => {
 
     const changeAmount = receive - total;
 
-    // Update order + table dalam satu transaction
     const paidOrder = await prisma.$transaction(async (tx) => {
-      // Update order menjadi PAID
       const updatedOrder = await tx.order.update({
         where: {
           id: orderId,
         },
         data: {
           status: "PAID",
-          isPaid: true,
+        },
+      });
+
+      await tx.payment.upsert({
+        where: {
+          orderId,
+        },
+        create: {
+          orderId,
+          method: "CASH",
+          status: "PAID",
+          amount: total,
+          amountReceived: receive,
+          changeAmount: changeAmount,
+          paidAt: new Date(),
+        },
+        update: {
+          method: "CASH",
+          status: "PAID",
+          amount: total,
           amountReceived: receive,
           changeAmount: changeAmount,
           paidAt: new Date(),
         },
       });
 
-      // Setelah pembayaran berhasil,
-      // meja kembali tersedia
       await tx.table.update({
         where: {
           id: order.tableId,
@@ -286,7 +414,6 @@ export const payOrder = async (req: Request, res: Response) => {
         },
       });
 
-      // Ambil kembali order lengkap
       return tx.order.findUnique({
         where: {
           id: updatedOrder.id,
@@ -298,11 +425,24 @@ export const payOrder = async (req: Request, res: Response) => {
               menu: true,
             },
           },
+          payment: true,
         },
       });
     });
 
-    return success(res, 200, "Order paid successfully", paidOrder);
+    const formattedPaidOrder = formatOrderResponse(paidOrder);
+
+    try {
+      getIO()
+        .to(`order:${orderId}`)
+        .emit("order_status_updated", formattedPaidOrder);
+
+      getIO().emit("order_updated", formattedPaidOrder);
+    } catch (e) {
+      console.error("Socket emit on payOrder error:", e);
+    }
+
+    return success(res, 200, "Order paid successfully", formattedPaidOrder);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
@@ -313,6 +453,10 @@ export const payOrder = async (req: Request, res: Response) => {
 export const getOrderById = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
+
+    if (!Number.isInteger(id)) {
+      return error(res, 404, "Order not found", "ORDER_NOT_FOUND");
+    }
 
     const order = await prisma.order.findUnique({
       where: {
@@ -325,18 +469,25 @@ export const getOrderById = async (req: Request, res: Response) => {
             menu: true,
           },
         },
+        payment: true,
       },
     });
 
     if (!order) {
-      return error(res, 400, "Order not found", "ORDER_NOT_FOUND");
+      return error(res, 404, "Order not found", "ORDER_NOT_FOUND");
     }
 
-    return success(res, 200, "Succes get order", order);
+    return success(
+      res,
+      200,
+      "Success get order",
+      formatOrderResponse(order)
+    );
   } catch (err) {
     console.error("Failed to get order:", err);
 
-    const message = err instanceof Error ? err.message : "Unknown server error";
+    const message =
+      err instanceof Error ? err.message : "Unknown server error";
 
     return res.status(500).json({
       success: false,

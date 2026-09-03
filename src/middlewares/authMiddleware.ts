@@ -22,8 +22,18 @@ export const authMiddleware = (
 
   const token = bearer.split(" ")[1];
 
+  if (!token) {
+    return error(
+      res,
+      401,
+      "Unauthorized",
+      "UNAUTHORIZED"
+    );
+  }
+
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const secret = process.env.JWT_SECRET || "default_secret";
+    const decoded = jwt.verify(token, secret);
 
     (req as any).user = decoded;
 

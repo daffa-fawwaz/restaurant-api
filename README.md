@@ -45,3 +45,5 @@ Untuk backup database:
 ```sh
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sql
 ```
+ 
+ 
