@@ -12,7 +12,7 @@ RUN npx prisma generate
 
 COPY src ./src
 
-EXPOSE 3001
+EXPOSE 3002
 
 # Migrations are idempotent: only migrations that have not run yet are applied.
 CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx src/app.ts"]

@@ -22,7 +22,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-restaurant}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
     ports:
-    - "127.0.0.1:5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
